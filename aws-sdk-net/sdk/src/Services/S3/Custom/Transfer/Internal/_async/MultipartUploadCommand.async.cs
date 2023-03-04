@@ -125,24 +125,36 @@ namespace Amazon.S3.Transfer.Internal
 
         private async Task<UploadPartResponse> UploadPartAsync(UploadPartRequest uploadRequest, CancellationTokenSource internalCts, SemaphoreSlim asyncThrottler)
         {
-            try
+            var maxRetries = _s3Client.Config.MaxErrorRetry;
+
+            for (int retry = 1; ; retry++)
             {
-                return await _s3Client.UploadPartAsync(uploadRequest, internalCts.Token)
-                    .ConfigureAwait(continueOnCapturedContext: false);
-            }
-            catch (Exception exception)
-            {
-                if (!(exception is OperationCanceledException))
+                try
                 {
-                    // Cancel scheduling any more tasks
-                    // Cancel other UploadPart requests running in parallel.
-                    internalCts.Cancel();
+                    return await _s3Client.UploadPartAsync(uploadRequest, internalCts.Token)
+                        .ConfigureAwait(continueOnCapturedContext: false);
                 }
-                throw;
-            }
-            finally
-            {
-                asyncThrottler.Release();
+                catch (Exception exception)
+                {
+                    if (retry <= maxRetries)
+                    {
+                         Logger.DebugFormat("Multipart Upload {0} part #{1} retry #{2}", uploadRequest.UploadId, uploadRequest.PartNumber, retry);
+                    }
+                    else
+                    {
+                        if (!(exception is OperationCanceledException))
+                        {
+                            // Cancel scheduling any more tasks
+                            // Cancel other UploadPart requests running in parallel.
+                            internalCts.Cancel();
+                        }
+                        throw;
+                    }
+                }
+                finally
+                {
+                    asyncThrottler.Release();
+                }
             }
         }       
 
